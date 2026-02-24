@@ -1,0 +1,588 @@
+================================================================================
+                    MODULE RELATIONSHIPS & DATA FLOW
+                          VISUAL REFERENCE
+================================================================================
+
+
+1. HIGH-LEVEL SYSTEM DIAGRAM
+================================================================================
+
+                    ┌───────────────────────────┐
+                    │     USER / OPERATOR       │
+                    │   (via Terminal/CLI)      │
+                    └─────────────┬─────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              MAIN.PY                                         │
+│                           CLI Interface                                      │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐        │
+│  │ Register │ │Recognize │ │  Smart   │ │Continuous│ │  Delete  │  ...   │
+│  │   Mode   │ │   Mode   │ │   Mode   │ │   Mode   │ │   Mode   │        │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘        │
+└───────┬─────────────┬─────────────┬─────────────┬─────────────┬───────────┘
+        │             │             │             │             │
+        ▼             ▼             ▼             ▼             ▼
+   ┌────────┐   ┌────────┐   ┌───────────┐  ┌────────┐   ┌────────┐
+   │Register│   │Detector│   │   Smart   │  │Detector│   │ Delete │
+   │  .py   │   │ .py    │   │Recognition│  │ .py    │   │  .py   │
+   └────┬───┘   └───┬────┘   │    .py    │  └───┬────┘   └───┬────┘
+        │           │         └─────┬─────┘      │            │
+        └───────────┴───────────────┴────────────┴────────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        │                           │                           │
+        ▼                           ▼                           ▼
+┌──────────────┐           ┌──────────────┐           ┌──────────────┐
+│   CAMERA     │           │   DETECTOR   │           │  EMBEDDER    │
+│  (camera.py) │──────────>│ (detector.py)│──────────>│(embedder.py) │
+│              │           │              │           │              │
+│  - OpenCV    │           │  - MTCNN     │           │  - FaceNet   │
+│  - Webcam    │           │  - Face Box  │           │  - 512D Vec  │
+│  - Capture   │           │  - Keypoints │           │  - Normalize │
+└──────────────┘           └──────────────┘           └──────┬───────┘
+                                                              │
+                          ┌───────────────────────────────────┘
+                          │
+        ┌─────────────────┼─────────────────┐
+        │                 │                 │
+        ▼                 ▼                 ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  RECOGNIZER  │  │   DATABASE   │  │    UTILS     │
+│(recognizer.py│  │ (database.py)│  │  (utils.py)  │
+│              │  │              │  │              │
+│ - Similarity │◄─┤  - MongoDB   │  │  - Helpers   │
+│ - Matching   │  │  - Storage   │  │  - Drawing   │
+│ - Top-K      │  │  - Queries   │  │  - Logging   │
+└──────────────┘  └──────────────┘  └──────────────┘
+                          │
+                          ▼
+                  ┌──────────────┐
+                  │   MongoDB    │
+                  │   Database   │
+                  │              │
+                  │ • Embeddings │
+                  │ • Names      │
+                  │ • Metadata   │
+                  └──────────────┘
+
+
+
+2. DATA FLOW DIAGRAM
+================================================================================
+
+REGISTRATION FLOW:
+------------------
+
+User Input                  Processing                     Storage
+───────────                 ──────────                     ───────
+
+[Press 'c']  ─────>  [Camera Capture]
+                            │
+                            ▼
+                     [640x480 Image]
+                            │
+                            ▼
+                     [MTCNN Detection] ───> Face Found?
+                            │                    │
+                            │                    ├─No──> [Error: No face]
+                            │                    │
+                            ├─Yes────────────────┘
+                            ▼
+                    [Extract 160x160]
+                            │
+                            ▼
+                     [FaceNet Model]
+                            │
+                            ▼
+                    [512D Embedding]
+                            │
+                            ▼
+                    [L2 Normalization]
+                            │
+[Enter Name] ─────>         ▼
+                    [Create Document]
+                            │
+                            ▼
+                    [MongoDB Insert] ───> [Database]
+                            │
+                            ▼
+                    [Delete Raw Image]
+                            │
+                            ▼
+                       [Success!]
+
+
+RECOGNITION FLOW:
+-----------------
+
+User Input                  Processing                     Output
+───────────                 ──────────                     ──────
+
+[Press 'c']  ─────>  [Camera Capture]
+                            │
+                            ▼
+                     [640x480 Image]
+                            │
+                            ▼
+                     [MTCNN Detection]
+                            │
+                            ▼
+                    [Extract 160x160]
+                            │
+                            ▼
+                     [FaceNet Model]
+                            │
+                            ▼
+                    [Query Embedding]
+                            │
+                ┌───────────┴───────────┐
+                ▼                       ▼
+         [Get All Faces]         [Calculate Similarities]
+          from MongoDB                  │
+                │                       │
+                └──────────┬────────────┘
+                           ▼
+                   [Similarity Array]
+                    [0.65, 0.92, 0.58]
+                           │
+                           ▼
+                    [Find Maximum]
+                     max = 0.92
+                           │
+                           ▼
+                  [Check Threshold]
+                   0.92 >= 0.90?
+                           │
+               ┌───────────┴───────────┐
+               ▼                       ▼
+            [YES]                   [NO]
+               │                       │
+               ▼                       ▼
+        [✓ Recognized]         [✗ Not Recognized]
+        [Show Name]            [Offer to Register]
+        [Confidence]                  │
+               │                      │
+               └──────────────────────┘
+                          │
+                          ▼
+                   [Display Result]
+
+
+
+3. CLASS RELATIONSHIPS (UML-style)
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              Camera                                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│ - index: int                                                             │
+│ - width: int                                                             │
+│ - height: int                                                            │
+│ - capture: VideoCapture                                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ + open() -> bool                                                         │
+│ + release() -> None                                                      │
+│ + read_frame() -> Optional[ndarray]                                      │
+│ + show_stream(window_name) -> Optional[ndarray]                          │
+│ + is_opened: bool                                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ uses
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           FaceDetector                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ - detector: MTCNN                                                        │
+│ - min_face_size: int                                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│ + detect(image) -> List[Dict]                                            │
+│ + detect_largest(image) -> Optional[Dict]                                │
+│ + detect_and_extract(image) -> Tuple[List, List]                         │
+│ + detect_and_extract_largest(image) -> Tuple[ndarray, Dict]              │
+│ + extract_face(image, box) -> ndarray                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ provides face to
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          FaceEmbedder                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│ - model: FaceNet                                                         │
+│ - target_size: Tuple[int, int]                                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│ + load_model() -> FaceNet                                                │
+│ + generate_embedding(face_img) -> Optional[ndarray]                      │
+│ + preprocess_face(face_img) -> ndarray                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ provides embedding to
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FaceRecognizer                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ - db: FaceDatabase                                                       │
+│ - recognition_threshold: float                                           │
+│ - high_confidence_threshold: float                                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│ + recognize(query_embedding) -> Tuple[bool, Dict, float]                 │
+│ + recognize_top_k(query_embedding, k) -> List[Tuple]                     │
+│ + get_confidence_level(similarity) -> str                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ uses
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          FaceDatabase                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│ - client: MongoClient                                                    │
+│ - db: Database                                                           │
+│ - collection: Collection                                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ + insert_face(face_id, name, embedding) -> bool                          │
+│ + get_face_by_id(face_id) -> Optional[Dict]                              │
+│ + get_face_by_name(name) -> Optional[Dict]                               │
+│ + get_all_faces() -> List[Dict]                                          │
+│ + delete_face(face_id) -> bool                                           │
+│ + update_face(face_id, updates) -> bool                                  │
+│ + get_count() -> int                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ stores in
+                                ▼
+                         [MongoDB Database]
+
+
+
+4. SMART RECOGNITION WORKFLOW
+================================================================================
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        SmartRecognition.run()                             │
+└──────────────────────────────────────────────────────────────────────────┘
+                                │
+            ┌───────────────────┴───────────────────┐
+            │                                       │
+            ▼                                       ▼
+    ┌──────────────┐                       ┌──────────────┐
+    │ Open Camera  │                       │ Capture Face │
+    └──────┬───────┘                       └──────┬───────┘
+           │                                       │
+           └────────────────┬──────────────────────┘
+                            ▼
+                    ┌──────────────┐
+                    │ Detect Face  │
+                    │   (MTCNN)    │
+                    └──────┬───────┘
+                           │
+                   Face Found?
+                           │
+               ┌───────────┴───────────┐
+               ▼                       ▼
+            [YES]                   [NO]
+               │                       │
+               ▼                       ▼
+    ┌──────────────────┐         [Error: No Face]
+    │ Generate         │              │
+    │ Embedding        │              └──> Exit
+    │ (FaceNet)        │
+    └──────┬───────────┘
+           │
+           ▼
+    ┌──────────────────┐
+    │ Search Database  │
+    │ (Calculate Sims) │
+    └──────┬───────────┘
+           │
+    ┌──────┴───────┐
+    │ Best Match   │
+    │ Similarity   │
+    └──────┬───────┘
+           │
+     >= Threshold?
+           │
+    ┌──────┴───────┐
+    ▼              ▼
+  [YES]          [NO]
+    │              │
+    ▼              ▼
+┌────────┐    ┌─────────────┐
+│RECOGNIZE│    │ NOT FOUND   │
+│         │    │             │
+│• Name   │    │ Prompt for  │
+│• Score  │    │ Name        │
+│• Welcome│    │             │
+│         │    │ ┌─────────┐ │
+└────┬────┘    │ │Register │ │
+     │         │ │New Face │ │
+     │         │ └────┬────┘ │
+     │         └──────┼──────┘
+     │                │
+     └────────┬───────┘
+              │
+              ▼
+        ┌──────────┐
+        │ Display  │
+        │ Result   │
+        └────┬─────┘
+             │
+             ▼
+        [Complete]
+
+
+
+5. MODULE DEPENDENCY GRAPH
+================================================================================
+
+Level 0 (No dependencies):
+─────────────────────────
+    [config.py]  [.env]
+          │
+          └─────────────────────┐
+                                │
+Level 1 (Config only):           │
+──────────────────────           │
+    [utils.py] ◄─────────────────┤
+                                 │
+Level 2 (Utils + Config):        │
+─────────────────────────        │
+    [camera.py] ◄────────────────┤
+    [database.py] ◄──────────────┤
+                                 │
+Level 3 (Advanced):              │
+───────────────────              │
+    [detector.py] ◄──────────────┤
+      (uses: utils)              │
+                                 │
+    [embedder.py] ◄──────────────┤
+      (uses: utils)              │
+                                 │
+Level 4 (Integration):           │
+──────────────────────           │
+    [recognizer.py] ◄────────────┤
+      (uses: database, utils)    │
+                                 │
+Level 5 (Workflows):             │
+────────────────────             │
+    [register.py] ◄──────────────┤
+      (uses: camera, detector,   │
+       embedder, database)       │
+                                 │
+    [delete.py] ◄────────────────┤
+      (uses: database)           │
+                                 │
+    [smart_recognition.py] ◄─────┤
+      (uses: camera, detector,   │
+       embedder, database,       │
+       recognizer, utils)        │
+                                 │
+Level 6 (CLI):                   │
+──────────────                   │
+    [main.py] ◄──────────────────┘
+      (uses: ALL modules)
+
+    [start.py]
+      (uses: smart_recognition)
+
+
+
+6. DATA STRUCTURES
+================================================================================
+
+FACE DETECTION OUTPUT:
+----------------------
+{
+    'box': [x, y, width, height],      # Bounding box coordinates
+    'confidence': 0.999,                # Detection confidence
+    'keypoints': {                      # Facial landmarks
+        'left_eye': (x, y),
+        'right_eye': (x, y),
+        'nose': (x, y),
+        'mouth_left': (x, y),
+        'mouth_right': (x, y)
+    }
+}
+
+EMBEDDING (numpy array):
+------------------------
+Shape: (512,)
+Type: float32
+Range: [-1.0, 1.0] (after L2 normalization)
+Example: [0.123, -0.456, 0.789, ..., 0.321]
+
+DATABASE DOCUMENT:
+------------------
+{
+    "_id": ObjectId,                    # MongoDB auto-generated
+    "face_id": "uuid-string",           # Unique identifier
+    "name": "Person Name",              # Person's name
+    "embedding": [512 floats],          # Face embedding
+    "summary": "Optional notes",        # Description
+    "created_at": "ISO timestamp",      # Creation time
+    "updated_at": "ISO timestamp",      # Last update
+    "embedding_dimension": 512          # Validation field
+}
+
+RECOGNITION RESULT:
+-------------------
+Tuple: (is_recognized, face_data, confidence)
+  - is_recognized: bool
+  - face_data: Dict or None
+  - confidence: float (0.0 - 1.0)
+
+Example:
+  (True, {'name': 'Alice', ...}, 0.9567)
+
+
+
+7. ALGORITHM COMPLEXITY
+================================================================================
+
+OPERATION                    TIME COMPLEXITY    SPACE COMPLEXITY
+─────────                    ───────────────    ────────────────
+Camera Capture               O(1)               O(W × H)
+MTCNN Detection              O(W × H)           O(W × H)
+Face Extraction              O(F × F)           O(F × F)
+FaceNet Forward Pass         O(D × L)           O(D)
+L2 Normalization             O(D)               O(D)
+Cosine Similarity            O(D)               O(1)
+Batch Similarity (N faces)   O(N × D)           O(N)
+Database Insert              O(log N)           O(D)
+Database Query All           O(N)               O(N × D)
+Best Match Search            O(N)               O(1)
+
+Where:
+  W = Image width (640)
+  H = Image height (480)
+  F = Face size (160)
+  D = Embedding dimension (512)
+  N = Number of faces in database
+  L = Network depth
+
+
+
+8. CONFIGURATION HIERARCHY
+================================================================================
+
+                    ┌─────────────────┐
+                    │  HIGHEST PRIORITY│
+                    │                 │
+                    │ Command-line    │
+                    │ Arguments       │
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │                 │
+                    │ Environment     │
+                    │ Variables (.env)│
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │                 │
+                    │ config.py       │
+                    │ Defaults        │
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │ LOWEST PRIORITY │
+                    │                 │
+                    │ Hardcoded       │
+                    │ Constants       │
+                    └─────────────────┘
+
+
+
+9. SIMILARITY SCORE INTERPRETATION
+================================================================================
+
+Score Range    Interpretation           Typical Scenario
+───────────    ──────────────           ────────────────
+1.00           IDENTICAL                Same photo, or duplicate
+0.95 - 0.99    Very High Confidence     Same person, good conditions
+0.90 - 0.94    High Confidence          Same person, varied conditions
+0.85 - 0.89    Medium Confidence        Uncertain - might be same
+0.75 - 0.84    Low Confidence           Different people (some similarity)
+0.60 - 0.74    Very Low                 Different people
+< 0.60         No Match                 Completely different
+
+
+                    THRESHOLD DECISION LOGIC
+                    ────────────────────────
+
+                         Query Embedding
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Compare with All DB │
+                    │    Embeddings       │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Best Match = 0.9567 │
+                    └──────────┬──────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │  >= Threshold?      │
+                    │  (0.90)             │
+                    └─────┬─────────┬─────┘
+                          │         │
+                  YES ◄───┘         └───► NO
+                          │                 │
+                          ▼                 ▼
+                    ┌──────────┐      ┌──────────┐
+                    │RECOGNIZED│      │NOT FOUND │
+                    └──────────┘      └──────────┘
+
+
+
+10. ERROR HANDLING FLOW
+================================================================================
+
+                        [Operation Attempted]
+                                │
+                                ▼
+                         Try: Execute
+                                │
+                   ┌────────────┴────────────┐
+                   │                         │
+                SUCCESS                   EXCEPTION
+                   │                         │
+                   ▼                         ▼
+            [Return Result]          [Catch Exception]
+                   │                         │
+                   │                         ▼
+                   │                  [Log Error Details]
+                   │                         │
+                   │                         ▼
+                   │                  [Retry Logic?]
+                   │                         │
+                   │                  ┌──────┴──────┐
+                   │                  │             │
+                   │                 YES           NO
+                   │                  │             │
+                   │                  ▼             ▼
+                   │            [Retry N times] [Return Error]
+                   │                  │             │
+                   │           ┌──────┴──────┐      │
+                   │           │             │      │
+                   │       SUCCESS       FAILED     │
+                   │           │             │      │
+                   └───────────┴─────────────┴──────┘
+                                │
+                                ▼
+                        [Return to User]
+
+
+RETRY LOGIC (Database Operations):
+-----------------------------------
+Max Retries: 3
+Retry Delay: 1.0s × (attempt_number)
+  - Attempt 1: Immediate
+  - Attempt 2: Wait 1.0s
+  - Attempt 3: Wait 2.0s
+  - Fail: Raise ConnectionError
+
+================================================================================
+END OF MODULE RELATIONSHIPS & DATA FLOW DOCUMENTATION
+================================================================================
